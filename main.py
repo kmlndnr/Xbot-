@@ -6,9 +6,9 @@ load_dotenv()
 import db
 import agent
 import twitter_client as tc
-from cli import show_main_menu, review_queue, SEPARATOR
+from cli import review_queue, SEPARATOR
+from auto_reply import run_auto_mode
 
-# Speichert die ID des zuletzt verarbeiteten Tweets für die aktuelle Session
 _since_id_cache: str | None = None
 
 
@@ -27,7 +27,6 @@ def fetch_and_generate():
         return
 
     print(f"  {len(mentions)} neue Mention(s) gefunden.")
-
     new_drafts = 0
     skipped = 0
 
@@ -60,7 +59,6 @@ def fetch_and_generate():
         db.mark_tweet_processed(tweet_id)
         new_drafts += 1
 
-        # Since-ID auf den neuesten Tweet setzen
         if _since_id_cache is None or int(tweet_id) > int(_since_id_cache):
             _since_id_cache = tweet_id
 
@@ -69,10 +67,22 @@ def fetch_and_generate():
         print("  Wechsle zu 'Review Queue', um die Entwürfe zu prüfen.")
 
 
+def show_main_menu() -> str:
+    print(f"\n{SEPARATOR}")
+    print("  XBOT – Twitter Agent")
+    print(SEPARATOR)
+    print("  [1]  Fetch & Generate  –  Mentions holen & Entwürfe erstellen")
+    print("  [2]  Review Queue      –  Entwürfe manuell prüfen & freigeben")
+    print("  [3]  Auto-Modus        –  Automatisch antworten (läuft dauerhaft)")
+    print("  [q]  Beenden")
+    print()
+    return input("  Deine Wahl: ").strip().lower()
+
+
 def main():
     db.init_db()
     print(f"\n{SEPARATOR}")
-    print("  Willkommen bei Xbot – dein Human-in-the-Loop Twitter Agent")
+    print("  Willkommen bei Xbot – dein Twitter Agent")
     print(f"{SEPARATOR}")
 
     while True:
@@ -82,6 +92,8 @@ def main():
             fetch_and_generate()
         elif choice == "2":
             review_queue()
+        elif choice == "3":
+            run_auto_mode()
         elif choice in ("q", "quit", "exit"):
             print("\n  Tschüss!\n")
             sys.exit(0)
