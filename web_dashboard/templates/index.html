@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xbot Dashboard</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background: #0f0f0f; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; }
+  .navbar { background: #1a1a2e !important; border-bottom: 1px solid #2a2a4e; }
+  .navbar-brand { color: #7c83fd !important; font-weight: 700; font-size: 1.3rem; }
+  .card { background: #1a1a2e; border: 1px solid #2a2a4e; }
+  .card-header { background: #16213e; border-bottom: 1px solid #2a2a4e; }
+  .stat-card { background: linear-gradient(135deg, #1a1a2e, #16213e); border: 1px solid #2a2a4e; }
+  .stat-number { font-size: 2rem; font-weight: 700; color: #7c83fd; }
+  .badge-pending { background: #f59e0b; }
+  .badge-approved { background: #10b981; }
+  .badge-rejected { background: #ef4444; }
+  .tweet-text { font-size: 0.9rem; background: #0f0f1a; padding: 10px 14px; border-radius: 8px; border-left: 3px solid #7c83fd; }
+  .draft-text { font-size: 0.95rem; background: #0f1a0f; padding: 10px 14px; border-radius: 8px; border-left: 3px solid #10b981; }
+  .analysis-text { font-size: 0.82rem; color: #9ca3af; font-style: italic; }
+  .char-counter { font-size: 0.8rem; }
+  .char-ok { color: #10b981; }
+  .char-warn { color: #ef4444; }
+  .btn-approve { background: #10b981; border: none; }
+  .btn-approve:hover { background: #059669; }
+  .btn-reject { background: #ef4444; border: none; }
+  .btn-reject:hover { background: #dc2626; }
+  .btn-edit { background: #f59e0b; border: none; color: #000; }
+  .btn-edit:hover { background: #d97706; }
+  textarea.edit-area { background: #0f0f1a; color: #e0e0e0; border: 1px solid #4a4a6e; resize: vertical; }
+  .toast-container { position: fixed; bottom: 1rem; right: 1rem; z-index: 9999; }
+  .section-title { color: #7c83fd; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+  .empty-state { color: #6b7280; text-align: center; padding: 3rem 0; }
+  .history-row td { font-size: 0.85rem; vertical-align: middle; }
+  .table { color: #e0e0e0; }
+  .table-dark { --bs-table-bg: #1a1a2e; --bs-table-border-color: #2a2a4e; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg">
+  <div class="container-fluid px-4">
+    <span class="navbar-brand">⚡ Xbot Dashboard</span>
+    <div class="d-flex align-items-center gap-3">
+      <span class="badge bg-warning text-dark">{{ stats.pending }} pending</span>
+      <a href="/" class="btn btn-sm btn-outline-light">Queue</a>
+      <a href="/history" class="btn btn-sm btn-outline-secondary">Verlauf</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid px-4 py-4">
+
+  <!-- Stats Row -->
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+      <div class="card stat-card p-3 text-center">
+        <div class="stat-number">{{ stats.total }}</div>
+        <div class="section-title mt-1">Gesamt</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card stat-card p-3 text-center">
+        <div class="stat-number" style="color:#10b981">{{ stats.approved }}</div>
+        <div class="section-title mt-1">Approved</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card stat-card p-3 text-center">
+        <div class="stat-number" style="color:#ef4444">{{ stats.rejected }}</div>
+        <div class="section-title mt-1">Rejected</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card stat-card p-3 text-center">
+        <div class="stat-number" style="color:#f59e0b">{{ stats.pending }}</div>
+        <div class="section-title mt-1">Pending</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pending Queue -->
+  {% if pending is defined and pending %}
+  <div class="mb-3">
+    <span class="section-title">📋 Ausstehende Entwürfe ({{ pending|length }})</span>
+  </div>
+  <div class="row g-3 mb-5">
+    {% for draft in pending %}
+    <div class="col-12 col-lg-6" id="card-{{ draft.id }}">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center py-2">
+          <span class="fw-semibold text-info">@{{ draft.author_username }}</span>
+          <small class="text-muted">{{ draft.created_at[:16] }}</small>
+        </div>
+        <div class="card-body">
+          <div class="section-title mb-1">Original</div>
+          <div class="tweet-text mb-3">{{ draft.original_text }}</div>
+
+          {% if draft.context_analysis %}
+          <div class="analysis-text mb-2">💡 {{ draft.context_analysis }}</div>
+          {% endif %}
+
+          <div class="section-title mb-1">Entwurf</div>
+          <div class="draft-text mb-1" id="draft-text-{{ draft.id }}">{{ draft.draft_text }}</div>
+          <div class="char-counter mb-3 {% if draft.draft_text|length <= 280 %}char-ok{% else %}char-warn{% endif %}">
+            {{ draft.draft_text|length }}/280 Zeichen
+          </div>
+
+          <!-- Edit Area (hidden by default) -->
+          <div id="edit-area-{{ draft.id }}" class="d-none mb-3">
+            <textarea class="form-control edit-area mb-1" id="edit-input-{{ draft.id }}"
+                      rows="3" maxlength="280">{{ draft.draft_text }}</textarea>
+            <div class="char-counter" id="edit-counter-{{ draft.id }}">{{ draft.draft_text|length }}/280</div>
+          </div>
+
+          <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-approve btn-sm text-white" onclick="approveDraft({{ draft.id }})">
+              ✅ Freigeben
+            </button>
+            <button class="btn btn-reject btn-sm text-white" onclick="rejectDraft({{ draft.id }})">
+              ❌ Ablehnen
+            </button>
+            <button class="btn btn-edit btn-sm" onclick="toggleEdit({{ draft.id }})">
+              ✏️ Bearbeiten
+            </button>
+            <button class="btn btn-sm btn-success d-none" id="approve-edited-btn-{{ draft.id }}"
+                    onclick="approveEdited({{ draft.id }})">
+              ✅ Bearbeitet freigeben
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% elif pending is defined and not pending %}
+  <div class="empty-state">
+    <div style="font-size:3rem">✅</div>
+    <div class="mt-2">Keine ausstehenden Entwürfe</div>
+    <small>Starte den Auto-Modus oder Fetch & Generate im Terminal</small>
+  </div>
+  {% endif %}
+
+  <!-- History Table -->
+  {% if history is defined and history %}
+  <div class="mb-3">
+    <span class="section-title">📜 Verlauf ({{ history|length }})</span>
+  </div>
+  <div class="card">
+    <div class="card-body p-0">
+      <table class="table table-dark table-hover mb-0">
+        <thead>
+          <tr>
+            <th>Datum</th>
+            <th>Account</th>
+            <th>Entwurf</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in history %}
+          <tr class="history-row">
+            <td class="text-muted">{{ d.created_at[:16] }}</td>
+            <td>@{{ d.author_username }}</td>
+            <td>{{ d.draft_text[:80] }}{% if d.draft_text|length > 80 %}...{% endif %}</td>
+            <td>
+              {% if d.status == 'approved' %}
+                <span class="badge badge-approved">approved</span>
+              {% elif d.status == 'rejected' %}
+                <span class="badge badge-rejected">rejected</span>
+              {% else %}
+                <span class="badge badge-pending">pending</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- Toast -->
+<div class="toast-container">
+  <div id="toast" class="toast align-items-center border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toast-msg"></div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+function showToast(msg, success=true) {
+  const el = document.getElementById('toast');
+  el.className = `toast align-items-center border-0 text-white bg-${success ? 'success' : 'danger'}`;
+  document.getElementById('toast-msg').textContent = msg;
+  bootstrap.Toast.getOrCreateInstance(el, {delay: 3000}).show();
+}
+
+function removeCard(id) {
+  const card = document.getElementById('card-' + id);
+  if (card) { card.style.transition = 'opacity 0.4s'; card.style.opacity = '0'; setTimeout(() => card.remove(), 400); }
+}
+
+async function approveDraft(id) {
+  const r = await fetch(`/api/draft/${id}/approve`, {method:'POST'});
+  const data = await r.json();
+  if (data.ok) { showToast('Gepostet! Tweet-ID: ' + data.tweet_id); removeCard(id); }
+  else showToast('Fehler: ' + data.error, false);
+}
+
+async function rejectDraft(id) {
+  const r = await fetch(`/api/draft/${id}/reject`, {method:'POST'});
+  const data = await r.json();
+  if (data.ok) { showToast('Abgelehnt.'); removeCard(id); }
+  else showToast('Fehler: ' + data.error, false);
+}
+
+function toggleEdit(id) {
+  const area = document.getElementById('edit-area-' + id);
+  const btn = document.getElementById('approve-edited-btn-' + id);
+  const input = document.getElementById('edit-input-' + id);
+  const counter = document.getElementById('edit-counter-' + id);
+  area.classList.toggle('d-none');
+  btn.classList.toggle('d-none');
+  input.addEventListener('input', () => {
+    const len = input.value.length;
+    counter.textContent = len + '/280';
+    counter.style.color = len <= 280 ? '#10b981' : '#ef4444';
+  });
+}
+
+async function approveEdited(id) {
+  const text = document.getElementById('edit-input-' + id).value.trim();
+  if (!text) return showToast('Text darf nicht leer sein.', false);
+  const r = await fetch(`/api/draft/${id}/approve_edited`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text})
+  });
+  const data = await r.json();
+  if (data.ok) { showToast('Bearbeiteter Tweet gepostet!'); removeCard(id); }
+  else showToast('Fehler: ' + data.error, false);
+}
+</script>
+</body>
+</html>

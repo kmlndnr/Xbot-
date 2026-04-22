@@ -1,0 +1,17 @@
+[Unit]
+Description=Xbot Telegram Review Bot
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/xbot
+ExecStart=/opt/xbot/venv/bin/python /opt/xbot/telegram_review.py
+Restart=on-failure
+RestartSec=30
+EnvironmentFile=/opt/xbot/.env
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
