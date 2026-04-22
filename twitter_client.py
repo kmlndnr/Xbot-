@@ -5,35 +5,32 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def _get_client() -> tweepy.Client:
+def _get_client(creds: dict | None = None) -> tweepy.Client:
+    c = creds or {}
     return tweepy.Client(
-        bearer_token=os.getenv("TWITTER_BEARER_TOKEN"),
-        consumer_key=os.getenv("TWITTER_API_KEY"),
-        consumer_secret=os.getenv("TWITTER_API_SECRET"),
-        access_token=os.getenv("TWITTER_ACCESS_TOKEN"),
-        access_token_secret=os.getenv("TWITTER_ACCESS_SECRET"),
+        bearer_token=c.get("bearer_token") or os.getenv("TWITTER_BEARER_TOKEN"),
+        consumer_key=c.get("api_key") or os.getenv("TWITTER_API_KEY"),
+        consumer_secret=c.get("api_secret") or os.getenv("TWITTER_API_SECRET"),
+        access_token=c.get("access_token") or os.getenv("TWITTER_ACCESS_TOKEN"),
+        access_token_secret=c.get("access_secret") or os.getenv("TWITTER_ACCESS_SECRET"),
         wait_on_rate_limit=True,
     )
 
 
-def get_my_user_id(client: tweepy.Client) -> str:
-    user_id = os.getenv("TWITTER_USER_ID", "").strip()
+def get_my_user_id(client: tweepy.Client, creds: dict | None = None) -> str:
+    user_id = (creds or {}).get("user_id") or os.getenv("TWITTER_USER_ID", "").strip()
     if user_id:
         return user_id
     me = client.get_me()
     if not me.data:
-        raise RuntimeError("Konnte eigene User-ID nicht abrufen. Prüfe deine API-Credentials.")
+        raise RuntimeError("Konnte eigene User-ID nicht abrufen.")
     return str(me.data.id)
 
 
-def fetch_mentions(since_id: str | None = None) -> list[dict]:
-    """
-    Gibt eine Liste von Mentions zurück.
-    Jedes Element: {tweet_id, author_id, author_username, text, conversation_id, in_reply_to_tweet_id}
-    """
-    client = _get_client()
-    user_id = get_my_user_id(client)
+# ── Mentions ──────────────────────────────────────────────────────────────────
 
+def _fetch_mentions_impl(client: tweepy.Client, user_id: str,
+                         since_id: str | None) -> list[dict]:
     kwargs = {
         "id": user_id,
         "tweet_fields": ["author_id", "text", "in_reply_to_user_id",
@@ -46,7 +43,6 @@ def fetch_mentions(since_id: str | None = None) -> list[dict]:
         kwargs["since_id"] = since_id
 
     response = client.get_users_mentions(**kwargs)
-
     if not response.data:
         return []
 
@@ -63,7 +59,6 @@ def fetch_mentions(since_id: str | None = None) -> list[dict]:
                 if ref.type == "replied_to":
                     in_reply_to = str(ref.id)
                     break
-
         results.append({
             "tweet_id": str(tweet.id),
             "author_id": str(tweet.author_id),
@@ -75,18 +70,27 @@ def fetch_mentions(since_id: str | None = None) -> list[dict]:
     return results
 
 
+def fetch_mentions(since_id: str | None = None) -> list[dict]:
+    client = _get_client()
+    user_id = get_my_user_id(client)
+    return _fetch_mentions_impl(client, user_id, since_id)
+
+
+def fetch_mentions_with_creds(creds: dict, since_id: str | None = None) -> list[dict]:
+    client = _get_client(creds)
+    user_id = get_my_user_id(client, creds)
+    return _fetch_mentions_impl(client, user_id, since_id)
+
+
+# ── Thread & Timeline ─────────────────────────────────────────────────────────
+
 def fetch_thread_context(conversation_id: str, exclude_tweet_id: str) -> list[str]:
-    """
-    Holt die letzten Tweets eines Threads als Kontextliste.
-    Gibt eine Liste von Tweet-Texten zurück (älteste zuerst).
-    """
     if not conversation_id:
         return []
     try:
         client = _get_client()
-        query = f"conversation_id:{conversation_id} -is:retweet"
         response = client.search_recent_tweets(
-            query=query,
+            query=f"conversation_id:{conversation_id} -is:retweet",
             tweet_fields=["text", "author_id", "created_at"],
             expansions=["author_id"],
             user_fields=["username"],
@@ -100,21 +104,16 @@ def fetch_thread_context(conversation_id: str, exclude_tweet_id: str) -> list[st
             for user in response.includes["users"]:
                 users_by_id[str(user.id)] = user.username
 
-        thread = []
-        for tweet in reversed(response.data):
-            if str(tweet.id) == exclude_tweet_id:
-                continue
-            username = users_by_id.get(str(tweet.author_id), "unknown")
-            thread.append(f"@{username}: {tweet.text}")
-        return thread
+        return [
+            f"@{users_by_id.get(str(t.author_id), 'unknown')}: {t.text}"
+            for t in reversed(response.data)
+            if str(t.id) != exclude_tweet_id
+        ]
     except Exception:
         return []
 
 
 def fetch_user_timeline(count: int = 10) -> list[str]:
-    """
-    Holt die eigenen letzten Tweets als Ton-Beispiele für den System-Prompt.
-    """
     try:
         client = _get_client()
         user_id = get_my_user_id(client)
@@ -124,19 +123,77 @@ def fetch_user_timeline(count: int = 10) -> list[str]:
             tweet_fields=["text"],
             exclude=["retweets", "replies"],
         )
-        if not response.data:
-            return []
-        return [tweet.text for tweet in response.data]
+        return [tweet.text for tweet in response.data] if response.data else []
     except Exception:
         return []
 
 
+# ── Reactions: Like & Retweet ─────────────────────────────────────────────────
+
+def like_tweet(tweet_id: str) -> bool:
+    try:
+        client = _get_client()
+        user_id = get_my_user_id(client)
+        client.like(user_id, tweet_id)
+        return True
+    except Exception:
+        return False
+
+
+def like_tweet_with_creds(creds: dict, tweet_id: str) -> bool:
+    try:
+        client = _get_client(creds)
+        user_id = get_my_user_id(client, creds)
+        client.like(user_id, tweet_id)
+        return True
+    except Exception:
+        return False
+
+
+def retweet(tweet_id: str) -> bool:
+    try:
+        client = _get_client()
+        user_id = get_my_user_id(client)
+        client.retweet(user_id, tweet_id)
+        return True
+    except Exception:
+        return False
+
+
+def retweet_with_creds(creds: dict, tweet_id: str) -> bool:
+    try:
+        client = _get_client(creds)
+        user_id = get_my_user_id(client, creds)
+        client.retweet(user_id, tweet_id)
+        return True
+    except Exception:
+        return False
+
+
+# ── Follower ──────────────────────────────────────────────────────────────────
+
+def fetch_followers(max_results: int = 100) -> list[dict]:
+    """Gibt aktuelle Follower als Liste zurück: {follower_id, username}"""
+    try:
+        client = _get_client()
+        user_id = get_my_user_id(client)
+        response = client.get_users_followers(
+            id=user_id,
+            max_results=max_results,
+            user_fields=["username"],
+        )
+        if not response.data:
+            return []
+        return [{"follower_id": str(u.id), "username": u.username}
+                for u in response.data]
+    except Exception as exc:
+        print(f"  fetch_followers Fehler: {exc}")
+        return []
+
+
+# ── DMs ───────────────────────────────────────────────────────────────────────
+
 def fetch_dms(since_id: str | None = None) -> list[dict]:
-    """
-    Holt neue Direktnachrichten.
-    Jedes Element: {dm_id, sender_id, sender_username, text}
-    Benötigt dm.read OAuth-Scope.
-    """
     try:
         client = _get_client()
         user_id = get_my_user_id(client)
@@ -151,7 +208,6 @@ def fetch_dms(since_id: str | None = None) -> list[dict]:
             kwargs["since_id"] = since_id
 
         response = client.get_dm_events(**kwargs)
-
         if not response.data:
             return []
 
@@ -160,39 +216,45 @@ def fetch_dms(since_id: str | None = None) -> list[dict]:
             for user in response.includes["users"]:
                 users_by_id[str(user.id)] = user.username
 
-        results = []
-        for event in response.data:
-            sender_id = str(event.sender_id)
-            # Eigene Nachrichten überspringen
-            if sender_id == user_id:
-                continue
-            results.append({
-                "dm_id": str(event.id),
-                "sender_id": sender_id,
-                "sender_username": users_by_id.get(sender_id, "unknown"),
-                "text": event.text,
-            })
-        return results
+        return [
+            {
+                "dm_id": str(e.id),
+                "sender_id": str(e.sender_id),
+                "sender_username": users_by_id.get(str(e.sender_id), "unknown"),
+                "text": e.text,
+            }
+            for e in response.data
+            if str(e.sender_id) != user_id
+        ]
     except Exception as exc:
         print(f"  DM-Fehler: {exc}")
         return []
 
 
 def reply_to_dm(recipient_id: str, text: str) -> str:
-    """Sendet eine DM und gibt die neue Event-ID zurück. Benötigt dm.write Scope."""
     client = _get_client()
-    response = client.create_direct_message(
-        participant_id=recipient_id,
-        text=text,
-    )
+    response = client.create_direct_message(participant_id=recipient_id, text=text)
     if not response.data:
         raise RuntimeError("DM konnte nicht gesendet werden.")
     return str(response.data["dm_conversation_id"])
 
 
+# ── Posting ───────────────────────────────────────────────────────────────────
+
 def post_reply(reply_text: str, in_reply_to_tweet_id: str) -> str:
-    """Postet einen Reply und gibt die neue Tweet-ID zurück."""
     client = _get_client()
+    response = client.create_tweet(
+        text=reply_text,
+        in_reply_to_tweet_id=in_reply_to_tweet_id,
+    )
+    if not response.data:
+        raise RuntimeError("Tweet konnte nicht gepostet werden.")
+    return str(response.data["id"])
+
+
+def post_reply_with_creds(creds: dict, reply_text: str,
+                           in_reply_to_tweet_id: str) -> str:
+    client = _get_client(creds)
     response = client.create_tweet(
         text=reply_text,
         in_reply_to_tweet_id=in_reply_to_tweet_id,

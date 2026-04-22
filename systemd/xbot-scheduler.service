@@ -1,0 +1,17 @@
+[Unit]
+Description=Xbot Tweet-Scheduler Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/xbot
+ExecStart=/opt/xbot/venv/bin/python /opt/xbot/main.py --scheduler
+Restart=on-failure
+RestartSec=10
+EnvironmentFile=/opt/xbot/.env
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
